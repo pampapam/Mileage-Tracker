@@ -20,6 +20,7 @@ import com.example.data.entity.Trip
 import com.example.data.repository.TripRepository
 import com.google.android.gms.location.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.combine
 import java.util.Locale
 
 class MileageTrackingService : Service() {
@@ -75,23 +76,18 @@ class MileageTrackingService : Service() {
         
         createNotificationChannel()
 
-        // Monitor flow updates to synchronously update our notification
+        // Monitor flow updates to update our values and refresh notification in a rate-limited way
         serviceScope.launch {
-            repository.totalCompletedDistance.collect { completed ->
+            combine(
+                repository.totalCompletedDistance,
+                repository.customTotalMileage,
+                repository.useMiles
+            ) { completed, offset, miles ->
                 totalCompletedDistanceMeters = completed ?: 0.0
-                updateForegroundNotification()
-            }
-        }
-        serviceScope.launch {
-            repository.customTotalMileage.collect { offset ->
                 customTotalMileageOffset = offset
-                updateForegroundNotification()
-            }
-        }
-        serviceScope.launch {
-            repository.useMiles.collect { useMiles ->
-                useMilesSystem = useMiles
-                updateForegroundNotification()
+                useMilesSystem = miles
+            }.collect {
+                updateNotification()
             }
         }
     }
@@ -244,8 +240,17 @@ class MileageTrackingService : Service() {
             .build()
     }
 
+    private var lastNotificationUpdateTime = 0L
+
     private fun updateNotification(ignoredContent: String = "") {
-        updateForegroundNotification()
+        val currentTime = System.currentTimeMillis()
+        val isPeriodicUpdate = ignoredContent.isNotEmpty() && ignoredContent.startsWith("Driving")
+        val isCriticalEvent = ignoredContent.isNotEmpty() && !isPeriodicUpdate
+        
+        if (currentTime - lastNotificationUpdateTime >= 5000L || isCriticalEvent || ignoredContent.isEmpty()) {
+            updateForegroundNotification()
+            lastNotificationUpdateTime = currentTime
+        }
     }
 
     private fun updateForegroundNotification() {
@@ -334,14 +339,13 @@ class MileageTrackingService : Service() {
                     }
                     
                     broadcastStatus()
-                    updateNotification()
                 }
             }
             
             try {
                 val handler = android.os.Handler(android.os.Looper.getMainLooper())
                 locationManager?.registerGnssStatusCallback(gnssStatusCallback!!, handler)
-            } catch (e: SecurityException) {
+            } catch (e: Exception) {
                 e.printStackTrace()
             }
         }
