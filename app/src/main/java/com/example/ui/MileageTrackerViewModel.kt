@@ -33,6 +33,27 @@ class MileageTrackerViewModel(
     val isAutoCalculationEnabled: StateFlow<Boolean> = repository.isAutoCalculationEnabled
     val themeMode: StateFlow<Int> = repository.themeMode
     val speedometerTheme: StateFlow<Int> = repository.speedometerTheme
+    val cardOrder: StateFlow<List<String>> = repository.cardOrder
+    val landscapeFeaturedSide: StateFlow<String> = repository.landscapeFeaturedSide
+    val landscapeFeaturedCard: StateFlow<String> = repository.landscapeFeaturedCard
+
+    fun setCardOrder(order: List<String>) {
+        viewModelScope.launch {
+            repository.setCardOrder(order)
+        }
+    }
+
+    fun setLandscapeFeaturedSide(side: String) {
+        viewModelScope.launch {
+            repository.setLandscapeFeaturedSide(side)
+        }
+    }
+
+    fun setLandscapeFeaturedCard(cardId: String) {
+        viewModelScope.launch {
+            repository.setLandscapeFeaturedCard(cardId)
+        }
+    }
 
     // Live update fields (received via service broadcasts)
     private val _currentSpeed = MutableStateFlow(0.0) // in m/s

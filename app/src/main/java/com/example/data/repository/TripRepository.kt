@@ -47,7 +47,52 @@ class TripRepository(
     private val _speedometerTheme = MutableStateFlow(getSpeedometerThemePref())
     val speedometerTheme: StateFlow<Int> = _speedometerTheme.asStateFlow()
 
+    // Preferences: Dashboard Card Order (comma-separated lists of: "odometer", "gps", "speedometer")
+    private val _cardOrder = MutableStateFlow(getCardOrderPref())
+    val cardOrder: StateFlow<List<String>> = _cardOrder.asStateFlow()
+
+    // Preferences: Landscape featured column side ("left" or "right")
+    private val _landscapeFeaturedSide = MutableStateFlow(getLandscapeFeaturedSidePref())
+    val landscapeFeaturedSide: StateFlow<String> = _landscapeFeaturedSide.asStateFlow()
+
+    // Preferences: Landscape featured card ID ("speedometer", "odometer", "gps")
+    private val _landscapeFeaturedCard = MutableStateFlow(getLandscapeFeaturedCardPref())
+    val landscapeFeaturedCard: StateFlow<String> = _landscapeFeaturedCard.asStateFlow()
+
     // Helper functions for prefs
+    private fun getLandscapeFeaturedSidePref(): String {
+        return prefs.getString("landscape_featured_side", "left") ?: "left"
+    }
+
+    private fun getLandscapeFeaturedCardPref(): String {
+        return prefs.getString("landscape_featured_card", "speedometer") ?: "speedometer"
+    }
+
+    fun setLandscapeFeaturedSide(side: String) {
+        prefs.edit().putString("landscape_featured_side", side).apply()
+        _landscapeFeaturedSide.value = side
+    }
+
+    fun setLandscapeFeaturedCard(cardId: String) {
+        prefs.edit().putString("landscape_featured_card", cardId).apply()
+        _landscapeFeaturedCard.value = cardId
+    }
+
+    private fun getCardOrderPref(): List<String> {
+        val saved = prefs.getString("dashboard_card_order", null)
+        val defaultCards = listOf("odometer", "gps", "speedometer")
+        return if (!saved.isNullOrEmpty()) {
+            saved.split(",").filter { it in defaultCards }
+        } else {
+            defaultCards
+        }
+    }
+
+    fun setCardOrder(order: List<String>) {
+        prefs.edit().putString("dashboard_card_order", order.joinToString(",")).apply()
+        _cardOrder.value = order
+    }
+
     private fun getCustomTotalMileagePref(): Double {
         return prefs.getFloat("custom_total_mileage", 0f).toDouble()
     }

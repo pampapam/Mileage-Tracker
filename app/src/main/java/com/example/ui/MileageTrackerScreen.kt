@@ -27,10 +27,15 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalConfiguration
@@ -150,6 +155,10 @@ fun MileageTrackerScreen(
         // Dialog state
         var showEditOdometerDialog by remember { mutableStateOf(false) }
         var showSettingsDialog by remember { mutableStateOf(false) }
+        var isEditingLayout by remember { mutableStateOf(false) }
+        val cardOrder by viewModel.cardOrder.collectAsState()
+        val landscapeFeaturedSide by viewModel.landscapeFeaturedSide.collectAsState()
+        val landscapeFeaturedCard by viewModel.landscapeFeaturedCard.collectAsState()
         var locationPermissionGranted by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(
@@ -240,6 +249,16 @@ fun MileageTrackerScreen(
                     containerColor = VibrantBg
                 ),
                 actions = {
+                    IconButton(
+                        onClick = { isEditingLayout = !isEditingLayout },
+                        modifier = Modifier.testTag("edit_layout_button")
+                    ) {
+                        Icon(
+                            imageVector = if (isEditingLayout) Icons.Default.Check else Icons.Default.Edit,
+                            contentDescription = "Edit Card Layout",
+                            tint = if (isEditingLayout) VibrantBlue else VibrantNavy
+                        )
+                    }
                     IconButton(
                         onClick = { viewModel.resetAll(context) },
                         modifier = Modifier.testTag("reset_all_button")
@@ -338,20 +357,35 @@ fun MileageTrackerScreen(
 
             if (selectedTab == 0) {
                 // TAB 0: DASHBOARD
-                if (isLandscape) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 16.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        // Left Column: Active Service Control Card
-                        Column(
-                            modifier = Modifier
-                                .weight(1.2f)
-                                .fillMaxHeight(),
-                            verticalArrangement = Arrangement.spacedBy(16.dp)
-                        ) {
+                @Composable
+                fun RenderCard(cardId: String, index: Int) {
+                    when (cardId) {
+                        "odometer" -> {
+                            OdometerCard(
+                                totalMileage = totalMileage,
+                                distanceUnit = distanceUnit,
+                                customTotalMileage = customTotalMileage,
+                                completedTripsCount = completedTrips.size,
+                                onEditClick = { showEditOdometerDialog = true },
+                                index = index,
+                                isEditingLayout = isEditingLayout,
+                                cardOrder = cardOrder,
+                                viewModel = viewModel
+                            )
+                        }
+                        "gps" -> {
+                            GpsStatusCard(
+                                isGpsActive = isGpsActive,
+                                satellites = satellitesConnected,
+                                signalLevel = gpsSignalLevel,
+                                onRefreshClick = { viewModel.refreshGps(context) },
+                                index = index,
+                                isEditingLayout = isEditingLayout,
+                                cardOrder = cardOrder,
+                                viewModel = viewModel
+                            )
+                        }
+                        "speedometer" -> {
                             ActiveTripPanel(
                                 activeTrip = activeTrip,
                                 currentSpeedNum = currentSpeedNum,
@@ -360,26 +394,30 @@ fun MileageTrackerScreen(
                                 distanceUnit = distanceUnit,
                                 useMiles = useMiles,
                                 speedometerTheme = speedometerTheme,
-                                modifier = Modifier.fillMaxHeight(),
                                 onActionClick = {
                                     if (activeTrip != null) {
                                         viewModel.stopTracking(context)
                                     } else {
                                         viewModel.startTracking(context)
                                     }
-                                }
+                                },
+                                index = index,
+                                isEditingLayout = isEditingLayout,
+                                cardOrder = cardOrder,
+                                viewModel = viewModel
                             )
                         }
+                    }
+                }
 
-                        // Right Column: main odometer, GPS Ribbon
+                if (isLandscape) {
+                    val featuredColumn = @Composable {
                         Column(
                             modifier = Modifier
                                 .weight(1f)
-                                .fillMaxHeight()
-                                .verticalScroll(rememberScrollState()),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                                .fillMaxHeight(),
+                            verticalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
-                            // Check permission warning
                             if (!locationPermissionGranted) {
                                 PermissionWarningCard(onGrantClick = {
                                     val reqPermissions = mutableListOf(
@@ -392,26 +430,44 @@ fun MileageTrackerScreen(
                                     }.toTypedArray()
                                     permissionLauncher.launch(reqPermissions)
                                 })
+                                Spacer(modifier = Modifier.height(16.dp))
                             }
-
-                            // Total mileage custom odometer
-                            OdometerCard(
-                                totalMileage = totalMileage,
-                                distanceUnit = distanceUnit,
-                                customTotalMileage = customTotalMileage,
-                                completedTripsCount = completedTrips.size,
-                                onEditClick = { showEditOdometerDialog = true }
-                            )
-
-                            // GPS Status ribbon indicator
-                            GpsStatusRibbon(
-                                isGpsActive = isGpsActive,
-                                satellites = satellitesConnected,
-                                signalLevel = gpsSignalLevel,
-                                onRefreshClick = { viewModel.refreshGps(context) }
-                            )
                             
+                            val indexOfFeatured = cardOrder.indexOf(landscapeFeaturedCard).coerceAtLeast(0)
+                            val fCardId = cardOrder.getOrNull(indexOfFeatured) ?: "speedometer"
+                            RenderCard(cardId = fCardId, index = indexOfFeatured)
+                        }
+                    }
+
+                    val scrollableColumn = @Composable {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            cardOrder.forEachIndexed { index, cardId ->
+                                if (cardId != landscapeFeaturedCard) {
+                                    RenderCard(cardId = cardId, index = index)
+                                }
+                            }
                             Spacer(modifier = Modifier.height(16.dp))
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        if (landscapeFeaturedSide == "left") {
+                            featuredColumn()
+                            scrollableColumn()
+                        } else {
+                            scrollableColumn()
+                            featuredColumn()
                         }
                     }
                 } else {
@@ -419,7 +475,8 @@ fun MileageTrackerScreen(
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(horizontal = 16.dp),
+                            .padding(horizontal = 16.dp)
+                            .verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
                         // Check permission warning
@@ -437,45 +494,12 @@ fun MileageTrackerScreen(
                             })
                         }
 
-                        // Odometer card
-                        OdometerCard(
-                            totalMileage = totalMileage,
-                            distanceUnit = distanceUnit,
-                            customTotalMileage = customTotalMileage,
-                            completedTripsCount = completedTrips.size,
-                            onEditClick = { showEditOdometerDialog = true }
-                        )
+                        // Loop through all cards in user's custom sequence
+                        cardOrder.forEachIndexed { index, cardId ->
+                            RenderCard(cardId = cardId, index = index)
+                        }
 
-                        // GPS Status Ribbon
-                        GpsStatusRibbon(
-                            isGpsActive = isGpsActive,
-                            satellites = satellitesConnected,
-                            signalLevel = gpsSignalLevel,
-                            onRefreshClick = { viewModel.refreshGps(context) }
-                        )
-
-                        // Current Trip Log Card with Speedometer Gauge
-                        ActiveTripPanel(
-                            activeTrip = activeTrip,
-                            currentSpeedNum = currentSpeedNum,
-                            speedLabel = speedLabel,
-                            displayActiveDistance = displayActiveDistance,
-                            distanceUnit = distanceUnit,
-                            useMiles = useMiles,
-                            speedometerTheme = speedometerTheme,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .weight(1.2f),
-                            onActionClick = {
-                                if (activeTrip != null) {
-                                    viewModel.stopTracking(context)
-                                } else {
-                                    viewModel.startTracking(context)
-                                }
-                            }
-                        )
-
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(16.dp))
                     }
                 }
             } else {
@@ -810,6 +834,108 @@ fun MileageTrackerScreen(
                                 }
                             }
                         }
+
+                        Divider(color = VibrantBorder.copy(alpha = 0.3f))
+
+                        // Section C: Landscape Column Custom Preferences
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Text(
+                                text = "LANDSCAPE COLUMN CONFIGURATION",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Black,
+                                color = VibrantNavy.copy(alpha = 0.6f),
+                                letterSpacing = 1.sp
+                            )
+
+                            // 1. Select which column side features the single card
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Featured Card Column", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = VibrantTextDark)
+                                    Text("Side to display the featured card (Left/Right)", fontSize = 10.sp, color = Color.Gray)
+                                }
+                                Row(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(VibrantBorder.copy(alpha = 0.2f))
+                                        .padding(2.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                ) {
+                                    val options = listOf("left" to "Left", "right" to "Right")
+                                    options.forEach { (value, label) ->
+                                        val isSelected = landscapeFeaturedSide == value
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(10.dp))
+                                                .background(if (isSelected) VibrantBlue else Color.Transparent)
+                                                .clickable { viewModel.setLandscapeFeaturedSide(value) }
+                                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                                                .testTag("featured_side_button_$value"),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = label,
+                                                fontSize = 11.sp,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                color = if (isSelected) Color.White else VibrantTextDark.copy(alpha = 0.7f)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            // 2. Select which card occupies the single full-height column
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Featured Dashboard Card", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = VibrantTextDark)
+                                    Text("Card that occupies the single full column", fontSize = 10.sp, color = Color.Gray)
+                                }
+                            }
+                            
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(VibrantBorder.copy(alpha = 0.15f))
+                                    .padding(4.dp),
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                val cards = listOf(
+                                    "speedometer" to "Speedometer",
+                                    "odometer" to "Odometer",
+                                    "gps" to "GPS Status"
+                                )
+                                cards.forEach { (id, label) ->
+                                    val isSelected = landscapeFeaturedCard == id
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(if (isSelected) VibrantBlue else Color.Transparent)
+                                            .clickable { viewModel.setLandscapeFeaturedCard(id) }
+                                            .padding(vertical = 8.dp)
+                                            .testTag("featured_card_button_$id"),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = label,
+                                            fontSize = 11.sp,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                            color = if (isSelected) Color.White else VibrantTextDark.copy(alpha = 0.7f)
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 },
                 confirmButton = {
@@ -903,45 +1029,193 @@ fun PermissionWarningCard(onGrantClick: () -> Unit) {
 }
 
 @Composable
+fun DashboardCard(
+    title: String,
+    icon: ImageVector,
+    index: Int,
+    isEditingLayout: Boolean,
+    cardOrder: List<String>,
+    viewModel: MileageTrackerViewModel,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    val colors = LocalMileageTrackerColors.current
+    var dragOffsetY by remember { mutableStateOf(0f) }
+    val animatedDragOffset by animateFloatAsState(
+        targetValue = dragOffsetY,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "dragOffset"
+    )
+
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val featuredCardVal by viewModel.landscapeFeaturedCard.collectAsState()
+    val isFeaturedInLandscape = isLandscape && cardOrder.getOrNull(index) == featuredCardVal
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = colors.cardBg),
+        shape = RoundedCornerShape(24.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .offset { IntOffset(0, animatedDragOffset.roundToInt()) }
+            .border(1.dp, colors.border.copy(alpha = 0.5f), RoundedCornerShape(24.dp))
+            .shadow(elevation = if (dragOffsetY != 0f) 8.dp else 2.dp, shape = RoundedCornerShape(24.dp))
+    ) {
+        Column(
+            modifier = Modifier.padding(18.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = "Card Icon",
+                        tint = colors.blue,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Text(
+                        text = title.uppercase(),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Black,
+                        color = colors.navy,
+                        letterSpacing = 1.2.sp
+                    )
+                }
+
+                if (isEditingLayout) {
+                    if (isFeaturedInLandscape) {
+                        Text(
+                            text = "FEATURED COLUMN",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = colors.blue,
+                            modifier = Modifier.padding(end = 4.dp)
+                        )
+                    } else {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "DRAG TO REORDER",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = colors.blue
+                            )
+
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(colors.blue.copy(alpha = 0.1f))
+                                    .pointerInput(Unit) {
+                                        detectDragGestures(
+                                            onDragStart = {},
+                                            onDrag = { change, dragAmount ->
+                                                change.consume()
+                                                dragOffsetY += dragAmount.y
+
+                                                val threshold = 180f
+                                                if (isLandscape) {
+                                                    val isDragAction = (dragOffsetY < -threshold) || (dragOffsetY > threshold)
+                                                    if (isDragAction) {
+                                                        val remainingCards = cardOrder.filter { it != featuredCardVal }
+                                                        if (remainingCards.size == 2) {
+                                                            val idxA = cardOrder.indexOf(remainingCards[0])
+                                                            val idxB = cardOrder.indexOf(remainingCards[1])
+                                                            if (idxA >= 0 && idxB >= 0) {
+                                                                val newOrder = cardOrder.toMutableList()
+                                                                newOrder[idxA] = remainingCards[1]
+                                                                newOrder[idxB] = remainingCards[0]
+                                                                viewModel.setCardOrder(newOrder)
+                                                                
+                                                                dragOffsetY = if (dragOffsetY < 0) dragOffsetY + 320f else dragOffsetY - 320f
+                                                            }
+                                                        }
+                                                    }
+                                                } else {
+                                                    if (dragOffsetY < -threshold && index > 0) {
+                                                        val newOrder = cardOrder.toMutableList()
+                                                        val temp = newOrder[index]
+                                                        newOrder[index] = newOrder[index - 1]
+                                                        newOrder[index - 1] = temp
+                                                        viewModel.setCardOrder(newOrder)
+                                                        dragOffsetY += 320f
+                                                    } else if (dragOffsetY > threshold && index < cardOrder.size - 1) {
+                                                        val newOrder = cardOrder.toMutableList()
+                                                        val temp = newOrder[index]
+                                                        newOrder[index] = newOrder[index + 1]
+                                                        newOrder[index + 1] = temp
+                                                        viewModel.setCardOrder(newOrder)
+                                                        dragOffsetY -= 320f
+                                                    }
+                                                }
+                                            },
+                                            onDragEnd = {
+                                                dragOffsetY = 0f
+                                            },
+                                            onDragCancel = {
+                                                dragOffsetY = 0f
+                                            }
+                                        )
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Menu,
+                                    contentDescription = "Drag to reorder",
+                                    tint = colors.blue,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Divider(color = colors.border.copy(alpha = 0.15f), modifier = Modifier.padding(bottom = 12.dp))
+
+            content()
+        }
+    }
+}
+
+@Composable
 fun OdometerCard(
     totalMileage: Double,
     distanceUnit: String,
     customTotalMileage: Double,
     completedTripsCount: Int,
-    onEditClick: () -> Unit
+    onEditClick: () -> Unit,
+    index: Int,
+    isEditingLayout: Boolean,
+    cardOrder: List<String>,
+    viewModel: MileageTrackerViewModel
 ) {
     val colors = LocalMileageTrackerColors.current
-    val VibrantBg = colors.bg
-    val VibrantTextDark = colors.textDark
     val VibrantNavy = colors.navy
     val VibrantBlue = colors.blue
-    val VibrantIceBlue = colors.iceBlue
-    val VibrantGrayBg = colors.grayBg
-    val VibrantLightGray = colors.lightGray
-    val VibrantBorder = colors.border
 
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(28.dp))
-            .background(VibrantIceBlue)
-            .border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(28.dp))
-            .padding(20.dp)
+    DashboardCard(
+        title = "Main Odometer",
+        icon = Icons.Default.LocationOn,
+        index = index,
+        isEditingLayout = isEditingLayout,
+        cardOrder = cardOrder,
+        viewModel = viewModel
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.Top
+            verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "MAIN ODOMETER",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = VibrantNavy.copy(alpha = 0.6f),
-                    letterSpacing = 1.5.sp
-                )
-                Spacer(modifier = Modifier.height(4.dp))
                 Row(
                     verticalAlignment = Alignment.Bottom,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -1048,109 +1322,112 @@ fun GpsSignalBars(signalLevel: Int, modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun GpsStatusRibbon(
+fun GpsStatusCard(
     isGpsActive: Boolean,
     satellites: Int,
     signalLevel: Int,
-    onRefreshClick: () -> Unit
+    onRefreshClick: () -> Unit,
+    index: Int,
+    isEditingLayout: Boolean,
+    cardOrder: List<String>,
+    viewModel: MileageTrackerViewModel
 ) {
     val colors = LocalMileageTrackerColors.current
-    val VibrantBg = colors.bg
     val VibrantTextDark = colors.textDark
-    val VibrantNavy = colors.navy
     val VibrantBlue = colors.blue
-    val VibrantIceBlue = colors.iceBlue
-    val VibrantGrayBg = colors.grayBg
-    val VibrantLightGray = colors.lightGray
-    val VibrantBorder = colors.border
 
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(VibrantGrayBg)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+    DashboardCard(
+        title = "GPS Satellite Connection",
+        icon = Icons.Default.LocationOn,
+        index = index,
+        isEditingLayout = isEditingLayout,
+        cardOrder = cardOrder,
+        viewModel = viewModel
     ) {
-        // Tracking Indicator
         Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-            val pulseScale by infiniteTransition.animateFloat(
-                initialValue = 0.6f,
-                targetValue = 1.0f,
-                animationSpec = infiniteRepeatable(
-                    animation = tween(1200, easing = LinearEasing),
-                    repeatMode = RepeatMode.Reverse
-                ),
-                label = "scale"
-            )
+            // Tracking Indicator
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+                val pulseScale by infiniteTransition.animateFloat(
+                    initialValue = 0.6f,
+                    targetValue = 1.0f,
+                    animationSpec = infiniteRepeatable(
+                        animation = tween(1200, easing = LinearEasing),
+                        repeatMode = RepeatMode.Reverse
+                    ),
+                    label = "scale"
+                )
 
-            Box(contentAlignment = Alignment.Center, modifier = Modifier.size(16.dp)) {
-                if (isGpsActive) {
+                Box(contentAlignment = Alignment.Center, modifier = Modifier.size(16.dp)) {
+                    if (isGpsActive) {
+                        Box(
+                            modifier = Modifier
+                                .size(12.dp)
+                                .clip(CircleShape)
+                                .background(Color.Green.copy(alpha = 0.5f * pulseScale))
+                        )
+                    }
                     Box(
                         modifier = Modifier
-                            .size(12.dp)
+                            .size(8.dp)
                             .clip(CircleShape)
-                            .background(Color.Green.copy(alpha = 0.5f * pulseScale))
+                            .background(if (isGpsActive) Color(0xFF4CAF50) else Color.Red)
                     )
                 }
-                Box(
-                    modifier = Modifier
-                        .size(8.dp)
-                        .clip(CircleShape)
-                        .background(if (isGpsActive) Color(0xFF4CAF50) else Color.Red)
+
+                Text(
+                    text = if (isGpsActive) "Auto-Monitoring Active" else "GPS Signal Off",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = VibrantTextDark
                 )
             }
 
-            Text(
-                text = if (isGpsActive) "Auto-Monitoring Active" else "GPS Signal Off",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = VibrantTextDark
-            )
-        }
-
-        // GPS Sat Info & Refresh Action Tag
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            if (isGpsActive) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier
-                        .background(Color.White.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                ) {
-                    GpsSignalBars(signalLevel = signalLevel)
-                    
-                    Text(
-                        text = "$satellites SATS",
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = VibrantTextDark
-                    )
-                }
-            }
-
-            // Refresh Command trigger button
-            IconButton(
-                onClick = onRefreshClick,
-                modifier = Modifier
-                    .size(28.dp)
-                    .background(VibrantBlue.copy(alpha = 0.15f), CircleShape)
+            // GPS Sat Info & Refresh Action Tag
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Icon(
-                    imageVector = Icons.Default.Refresh,
-                    contentDescription = "Refresh GPS connection",
-                    tint = VibrantBlue,
-                    modifier = Modifier.size(14.dp)
-                )
+                if (isGpsActive) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier
+                            .background(colors.lightGray, RoundedCornerShape(8.dp))
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        GpsSignalBars(signalLevel = signalLevel)
+                        
+                        Text(
+                            text = "$satellites SATS",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = VibrantTextDark
+                        )
+                    }
+                }
+
+                // Refresh Command trigger button
+                IconButton(
+                    onClick = onRefreshClick,
+                    modifier = Modifier
+                        .size(36.dp)
+                        .background(VibrantBlue.copy(alpha = 0.15f), CircleShape)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = "Refresh GPS connection",
+                        tint = VibrantBlue,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
             }
         }
     }
@@ -1166,72 +1443,70 @@ fun ActiveTripPanel(
     useMiles: Boolean,
     speedometerTheme: Int,
     modifier: Modifier = Modifier,
-    onActionClick: () -> Unit
+    onActionClick: () -> Unit,
+    index: Int,
+    isEditingLayout: Boolean,
+    cardOrder: List<String>,
+    viewModel: MileageTrackerViewModel
 ) {
     val colors = LocalMileageTrackerColors.current
-    val VibrantBg = colors.bg
     val VibrantTextDark = colors.textDark
     val VibrantNavy = colors.navy
     val VibrantBlue = colors.blue
-    val VibrantIceBlue = colors.iceBlue
-    val VibrantGrayBg = colors.grayBg
-    val VibrantLightGray = colors.lightGray
     val VibrantBorder = colors.border
 
-    Box(
+    DashboardCard(
+        title = "Live Speedometer & Trip",
+        icon = Icons.Default.PlayArrow,
+        index = index,
+        isEditingLayout = isEditingLayout,
+        cardOrder = cardOrder,
+        viewModel = viewModel,
         modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(32.dp))
-            .background(colors.cardBg)
-            .border(1.dp, VibrantBorder, RoundedCornerShape(32.dp))
-            .shadow(elevation = 2.dp, shape = RoundedCornerShape(32.dp))
-            .padding(20.dp)
     ) {
         Column(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.SpaceBetween
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Title Label
+            // Dynamic monitoring status badge
             Box(
                 modifier = Modifier
-                    .background(Color(0xFFD3E4F6), RoundedCornerShape(100.dp))
-                    .padding(horizontal = 12.dp, vertical = 4.dp)
+                    .background(
+                        if (activeTrip != null) Color(0xFFDFF0D8) else Color(0xFFF2DEDE),
+                        RoundedCornerShape(100.dp)
+                    )
+                    .padding(horizontal = 14.dp, vertical = 6.dp)
             ) {
                 Text(
                     text = if (activeTrip != null) "ACTIVE RE-CALCULATED DRIVE" else "STANDBY SYSTEM",
-                    fontSize = 9.sp,
+                    fontSize = 10.sp,
                     fontWeight = FontWeight.Black,
-                    color = VibrantNavy,
-                    letterSpacing = 1.5.sp
+                    color = if (activeTrip != null) Color(0xFF3C763D) else Color(0xFFA94442),
+                    letterSpacing = 1.2.sp
                 )
             }
 
-            // Speedometer and metrics
+            // Massive speedometer centerstage
+            Box(
+                modifier = Modifier.size(210.dp), // ENLARGED: 210dp instead of 130dp! Utilize space completely!
+                contentAlignment = Alignment.Center
+            ) {
+                SpeedometerGauge(speedVal = currentSpeedNum, useMiles = useMiles, theme = speedometerTheme)
+            }
+
+            // Clean, symmetrical metrics row beneath the massive speedometer
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f)
-                    .padding(vertical = 12.dp),
+                    .border(1.dp, VibrantBorder.copy(alpha = 0.3f), RoundedCornerShape(16.dp))
+                    .background(colors.lightGray.copy(alpha = 0.5f))
+                    .padding(vertical = 12.dp, horizontal = 16.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Vector Interactive Custom Gauge Speedometer
-                Box(
-                    modifier = Modifier
-                        .size(130.dp)
-                        .weight(1f),
-                    contentAlignment = Alignment.Center
-                ) {
-                    SpeedometerGauge(speedVal = currentSpeedNum, useMiles = useMiles, theme = speedometerTheme)
-                }
-
-                // Trip mileage details next to Speedometer
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(start = 12.dp),
-                    verticalArrangement = Arrangement.Center
-                ) {
+                // Metric A: Trip distance
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -1240,53 +1515,62 @@ fun ActiveTripPanel(
                             imageVector = Icons.Default.List,
                             contentDescription = "Trip Dist icon",
                             tint = VibrantBlue,
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier.size(14.dp)
                         )
                         Text(
                             text = "TRIP DISTANCE",
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
-                            color = VibrantNavy.copy(alpha = 0.5f)
+                            color = VibrantNavy.copy(alpha = 0.6f)
                         )
                     }
-                    Spacer(modifier = Modifier.height(2.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = String.format(Locale.getDefault(), "%.2f %s", displayActiveDistance, distanceUnit),
-                        fontSize = 24.sp,
+                        fontSize = 22.sp,
                         fontWeight = FontWeight.Black,
                         color = VibrantBlue
                     )
+                }
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                // Vertical Divider
+                Box(
+                    modifier = Modifier
+                        .height(36.dp)
+                        .width(1.dp)
+                        .background(VibrantBorder.copy(alpha = 0.3f))
+                )
 
+                // Metric B: Speedometer digital copy
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.Info,
-                            contentDescription = "Current Speed icon",
+                            contentDescription = "Speedometer icon",
                             tint = VibrantTextDark,
                             modifier = Modifier.size(14.dp)
                         )
                         Text(
-                            text = "SPEEDOMETER",
+                            text = "SPEED",
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
-                            color = VibrantNavy.copy(alpha = 0.5f)
+                            color = VibrantNavy.copy(alpha = 0.6f)
                         )
                     }
-                    Spacer(modifier = Modifier.height(2.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = String.format(Locale.getDefault(), "%.1f %s", currentSpeedNum, speedLabel),
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Black,
                         color = VibrantNavy
                     )
                 }
             }
 
-            // Main Start/Stop button
+            // Action button filling width elegantly
             Button(
                 onClick = onActionClick,
                 modifier = Modifier
@@ -1312,165 +1596,6 @@ fun ActiveTripPanel(
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Black
                     )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun PreferencesCard(
-    isAutostartEnabled: Boolean,
-    isAutoCalculationEnabled: Boolean,
-    useMiles: Boolean,
-    viewModel: MileageTrackerViewModel
-) {
-    val themeMode by viewModel.themeMode.collectAsState()
-    val colors = LocalMileageTrackerColors.current
-    val VibrantBg = colors.bg
-    val VibrantTextDark = colors.textDark
-    val VibrantNavy = colors.navy
-    val VibrantBlue = colors.blue
-    val VibrantIceBlue = colors.iceBlue
-    val VibrantGrayBg = colors.grayBg
-    val VibrantLightGray = colors.lightGray
-    val VibrantBorder = colors.border
-
-    Card(
-        colors = CardDefaults.cardColors(containerColor = VibrantLightGray),
-        shape = RoundedCornerShape(20.dp),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            // Header
-            Text(
-                text = "INTELLIGENT RUNNING PREFERENCES",
-                fontSize = 9.sp,
-                fontWeight = FontWeight.Black,
-                color = VibrantNavy.copy(alpha = 0.6f),
-                letterSpacing = 1.sp
-            )
-
-            // Autostart toggle row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text("Allow Autostart each boot", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = VibrantTextDark)
-                    Text("Automatically open app and start tracking on device boot", fontSize = 10.sp, color = Color.Gray)
-                }
-                Switch(
-                    checked = isAutostartEnabled,
-                    onCheckedChange = { viewModel.toggleAutostart(it) },
-                    colors = SwitchDefaults.colors(checkedThumbColor = VibrantBlue),
-                    modifier = Modifier.testTag("autostart_switch")
-                )
-            }
-
-            Divider(color = VibrantBorder.copy(alpha = 0.3f))
-
-            // Auto Calculation toggle row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text("Auto-Calculate Trips", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = VibrantTextDark)
-                    Text("Auto start when moving > 5 km/h", fontSize = 10.sp, color = Color.Gray)
-                }
-                Switch(
-                    checked = isAutoCalculationEnabled,
-                    onCheckedChange = { viewModel.toggleAutoCalculation(it) },
-                    colors = SwitchDefaults.colors(checkedThumbColor = VibrantBlue),
-                    modifier = Modifier.testTag("autocalc_switch")
-                )
-            }
-
-            Divider(color = VibrantBorder.copy(alpha = 0.3f))
-
-            // Distance unit toggle row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text("Preferred Unit System", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = VibrantTextDark)
-                    Text("Switch between imperial or metric scale", fontSize = 10.sp, color = Color.Gray)
-                }
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Text(
-                        "Km", 
-                        fontSize = 12.sp, 
-                        fontWeight = if (!useMiles) FontWeight.Bold else FontWeight.Normal,
-                        color = if (!useMiles) VibrantBlue else Color.Gray,
-                        modifier = Modifier.clickable { viewModel.toggleUseMiles(false) }
-                    )
-                    Switch(
-                        checked = useMiles,
-                        onCheckedChange = { viewModel.toggleUseMiles(it) },
-                        colors = SwitchDefaults.colors(checkedThumbColor = VibrantBlue),
-                        modifier = Modifier.testTag("unit_switch")
-                    )
-                    Text(
-                        "Mi", 
-                        fontSize = 12.sp, 
-                        fontWeight = if (useMiles) FontWeight.Bold else FontWeight.Normal,
-                        color = if (useMiles) VibrantBlue else Color.Gray,
-                        modifier = Modifier.clickable { viewModel.toggleUseMiles(true) }
-                    )
-                }
-            }
-
-            Divider(color = VibrantBorder.copy(alpha = 0.3f))
-
-            // Theme toggle row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text("App Theme Mode", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = VibrantTextDark)
-                    Text("System Default, Light, or Dark Mode", fontSize = 10.sp, color = Color.Gray)
-                }
-
-                Row(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(VibrantBorder.copy(alpha = 0.2f))
-                        .padding(2.dp),
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    val themes = listOf("Sys", "Light", "Dark")
-                    themes.forEachIndexed { index, name ->
-                        val isSelected = themeMode == index
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(if (isSelected) VibrantBlue else Color.Transparent)
-                                .clickable { viewModel.setThemeMode(index) }
-                                .padding(horizontal = 10.dp, vertical = 6.dp)
-                                .testTag("theme_button_$index"),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = name,
-                                fontSize = 11.sp,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                color = if (isSelected) Color.White else VibrantTextDark.copy(alpha = 0.7f)
-                            )
-                        }
-                    }
                 }
             }
         }
