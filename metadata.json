@@ -1,0 +1,6 @@
+{
+  "name": "Mileage Tracker",
+  "description": "High-precision GPS mileage tracking app with automatic trip calculations, configurable total odometer, and receiver support for automatic start during device boots.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
