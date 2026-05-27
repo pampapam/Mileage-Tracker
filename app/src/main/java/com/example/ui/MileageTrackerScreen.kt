@@ -106,6 +106,8 @@ fun MileageTrackerScreen(
     // Live Service states
     val currentSpeedMs by viewModel.currentSpeed.collectAsState()
     val isGpsActive by viewModel.isGpsActive.collectAsState()
+    val satellitesConnected by viewModel.satellitesConnected.collectAsState()
+    val gpsSignalLevel by viewModel.gpsSignalLevel.collectAsState()
     val liveActiveDistance by viewModel.liveActiveDistance.collectAsState()
 
     val themeMode by viewModel.themeMode.collectAsState()
@@ -142,11 +144,12 @@ fun MileageTrackerScreen(
         val VibrantLightGray = colors.lightGray
         val VibrantBorder = colors.border
 
-        // Navigation selection state: 0 = Dashboard, 1 = Settings
+        // Navigation selection state: 0 = Dashboard, 1 = History
         var selectedTab by remember { mutableStateOf(0) }
 
         // Dialog state
         var showEditOdometerDialog by remember { mutableStateOf(false) }
+        var showSettingsDialog by remember { mutableStateOf(false) }
         var locationPermissionGranted by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(
@@ -161,6 +164,15 @@ fun MileageTrackerScreen(
     ) { permissions ->
         val fineLocationGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true
         locationPermissionGranted = fineLocationGranted
+        if (fineLocationGranted) {
+            viewModel.startGpsMonitoringIfNotRunning(context)
+        }
+    }
+
+    LaunchedEffect(locationPermissionGranted) {
+        if (locationPermissionGranted) {
+            viewModel.startGpsMonitoringIfNotRunning(context)
+        }
     }
 
     // Launch permission request if missing fine location
@@ -238,6 +250,16 @@ fun MileageTrackerScreen(
                             tint = VibrantNavy
                         )
                     }
+                    IconButton(
+                        onClick = { showSettingsDialog = true },
+                        modifier = Modifier.testTag("settings_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Open Settings",
+                            tint = VibrantNavy
+                        )
+                    }
                 }
             )
         }
@@ -292,7 +314,7 @@ fun MileageTrackerScreen(
                         .background(if (selectedTab == 1) VibrantBlue else Color.Transparent)
                         .clickable { selectedTab = 1 }
                         .padding(vertical = 10.dp)
-                        .testTag("tab_settings"),
+                        .testTag("tab_history"),
                     contentAlignment = Alignment.Center
                 ) {
                     Row(
@@ -300,12 +322,12 @@ fun MileageTrackerScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = "Settings",
+                            imageVector = Icons.Default.List,
+                            contentDescription = "History",
                             tint = if (selectedTab == 1) Color.White else VibrantTextDark.copy(alpha = 0.6f)
                         )
                         Text(
-                            text = "Settings",
+                            text = "History",
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.sp,
                             color = if (selectedTab == 1) Color.White else VibrantTextDark.copy(alpha = 0.8f)
@@ -323,10 +345,10 @@ fun MileageTrackerScreen(
                             .padding(horizontal = 16.dp, vertical = 8.dp),
                         horizontalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
-                        // Left Column: Navigation / Active Service Control Card
+                        // Left Column: Active Service Control Card
                         Column(
                             modifier = Modifier
-                                .weight(1.1f)
+                                .weight(1.2f)
                                 .fillMaxHeight(),
                             verticalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
@@ -338,6 +360,7 @@ fun MileageTrackerScreen(
                                 distanceUnit = distanceUnit,
                                 useMiles = useMiles,
                                 speedometerTheme = speedometerTheme,
+                                modifier = Modifier.fillMaxHeight(),
                                 onActionClick = {
                                     if (activeTrip != null) {
                                         viewModel.stopTracking(context)
@@ -348,10 +371,10 @@ fun MileageTrackerScreen(
                             )
                         }
 
-                        // Right Column: main odometer, historical logs
+                        // Right Column: main odometer, GPS Ribbon
                         Column(
                             modifier = Modifier
-                                .weight(1.5f)
+                                .weight(1f)
                                 .fillMaxHeight()
                                 .verticalScroll(rememberScrollState()),
                             verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -381,45 +404,12 @@ fun MileageTrackerScreen(
                             )
 
                             // GPS Status ribbon indicator
-                            GpsStatusRibbon(isGpsActive = isGpsActive)
-
-                            // Historical Drive logs list
-                            Column(modifier = Modifier.fillMaxWidth()) {
-                                Text(
-                                    text = "HISTORICAL DRIVE LOGS",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = VibrantNavy.copy(alpha = 0.6f),
-                                    letterSpacing = 1.2.sp,
-                                    modifier = Modifier.padding(bottom = 6.dp)
-                                )
-
-                                if (completedTrips.isEmpty()) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(100.dp)
-                                            .background(VibrantLightGray, RoundedCornerShape(16.dp)),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(
-                                            text = "No completed trips logged yet.",
-                                            fontSize = 13.sp,
-                                            color = Color.Gray,
-                                            textAlign = TextAlign.Center
-                                        )
-                                    }
-                                } else {
-                                    Column(
-                                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                                        modifier = Modifier.testTag("historical_logs_list")
-                                    ) {
-                                        completedTrips.forEach { trip ->
-                                            TripLogItem(trip = trip, deleteTrip = { viewModel.deleteTrip(trip) }, useMiles = useMiles)
-                                        }
-                                    }
-                                }
-                            }
+                            GpsStatusRibbon(
+                                isGpsActive = isGpsActive,
+                                satellites = satellitesConnected,
+                                signalLevel = gpsSignalLevel,
+                                onRefreshClick = { viewModel.refreshGps(context) }
+                            )
                             
                             Spacer(modifier = Modifier.height(16.dp))
                         }
@@ -457,120 +447,198 @@ fun MileageTrackerScreen(
                         )
 
                         // GPS Status Ribbon
-                        GpsStatusRibbon(isGpsActive = isGpsActive)
+                        GpsStatusRibbon(
+                            isGpsActive = isGpsActive,
+                            satellites = satellitesConnected,
+                            signalLevel = gpsSignalLevel,
+                            onRefreshClick = { viewModel.refreshGps(context) }
+                        )
 
                         // Current Trip Log Card with Speedometer Gauge
+                        ActiveTripPanel(
+                            activeTrip = activeTrip,
+                            currentSpeedNum = currentSpeedNum,
+                            speedLabel = speedLabel,
+                            displayActiveDistance = displayActiveDistance,
+                            distanceUnit = distanceUnit,
+                            useMiles = useMiles,
+                            speedometerTheme = speedometerTheme,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1.2f),
+                            onActionClick = {
+                                if (activeTrip != null) {
+                                    viewModel.stopTracking(context)
+                                } else {
+                                    viewModel.startTracking(context)
+                                }
+                            }
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+                }
+            } else {
+                // TAB 1: HISTORY/PREVIOUS TRIP LOGS TAB
+                val totalCompletedDistance = completedTrips.sumOf { it.distanceMeters } * distanceFactor
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    // Summary Statistics Card
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = VibrantIceBlue.copy(alpha = 0.45f)),
+                        shape = RoundedCornerShape(20.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(16.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(
+                                    text = "DRIVES SUMMARY",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Black,
+                                    color = VibrantNavy.copy(alpha = 0.6f),
+                                    letterSpacing = 1.2.sp
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "${completedTrips.size} total drives",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = VibrantTextDark
+                                )
+                            }
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text(
+                                    text = "TOTAL DISTANCE",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Black,
+                                    color = VibrantNavy.copy(alpha = 0.6f),
+                                    letterSpacing = 1.2.sp
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = String.format(Locale.getDefault(), "%.2f %s", totalCompletedDistance, distanceUnit),
+                                    fontSize = 20.sp,
+                                    fontWeight = FontWeight.Black,
+                                    color = VibrantBlue
+                                )
+                            }
+                        }
+                    }
+
+                    // Historical Drive logs list header
+                    Text(
+                        text = "HISTORICAL DRIVE LOGS",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = VibrantNavy.copy(alpha = 0.6f),
+                        letterSpacing = 1.2.sp,
+                        modifier = Modifier.padding(bottom = 2.dp)
+                    )
+
+                    if (completedTrips.isEmpty()) {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .weight(1.1f)
+                                .weight(1f)
+                                .background(VibrantLightGray, RoundedCornerShape(20.dp)),
+                            contentAlignment = Alignment.Center
                         ) {
-                            ActiveTripPanel(
-                                activeTrip = activeTrip,
-                                currentSpeedNum = currentSpeedNum,
-                                speedLabel = speedLabel,
-                                displayActiveDistance = displayActiveDistance,
-                                distanceUnit = distanceUnit,
-                                useMiles = useMiles,
-                                speedometerTheme = speedometerTheme,
-                                onActionClick = {
-                                    if (activeTrip != null) {
-                                        viewModel.stopTracking(context)
-                                    } else {
-                                        viewModel.startTracking(context)
-                                    }
-                                }
-                            )
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(
+                                    imageVector = Icons.Default.Info,
+                                    contentDescription = "No drive logs",
+                                    tint = Color.Gray,
+                                    modifier = Modifier.size(36.dp)
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "No completed trips logged yet.",
+                                    fontSize = 13.sp,
+                                    color = Color.Gray,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
                         }
-
-                        // Historical Logs segment
-                        Column(
+                    } else {
+                        LazyColumn(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .weight(0.9f)
+                                .weight(1f)
+                                .testTag("historical_logs_list"),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            contentPadding = PaddingValues(bottom = 16.dp)
                         ) {
-                            Text(
-                                text = "HISTORICAL DRIVE LOGS",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = VibrantNavy.copy(alpha = 0.6f),
-                                letterSpacing = 1.2.sp,
-                                modifier = Modifier.padding(bottom = 8.dp)
-                            )
-
-                            if (completedTrips.isEmpty()) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .weight(1f)
-                                        .background(VibrantLightGray, RoundedCornerShape(16.dp)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = "No completed trips logged yet.",
-                                        fontSize = 13.sp,
-                                        color = Color.Gray,
-                                        textAlign = TextAlign.Center
-                                    )
-                                }
-                            } else {
-                                LazyColumn(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .weight(1f)
-                                        .testTag("historical_logs_list"),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    items(completedTrips) { trip ->
-                                        TripLogItem(trip = trip, deleteTrip = { viewModel.deleteTrip(trip) }, useMiles = useMiles)
-                                    }
-                                }
+                            items(completedTrips) { trip ->
+                                TripLogItem(trip = trip, deleteTrip = { viewModel.deleteTrip(trip) }, useMiles = useMiles)
                             }
                         }
                     }
                 }
-            } else {
-                // TAB 1: SETTINGS TAB
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 16.dp)
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    // 1. Customized Speedometer Theme Selector Layout
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = VibrantLightGray),
-                        shape = RoundedCornerShape(20.dp),
-                        modifier = Modifier.fillMaxWidth()
+            }
+        }
+    }
+
+        // Settings Dialog Modal
+        if (showSettingsDialog) {
+            AlertDialog(
+                onDismissRequest = { showSettingsDialog = false },
+                title = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Settings",
+                            tint = VibrantBlue
+                        )
+                        Text(
+                            text = "Preferences & Settings",
+                            fontWeight = FontWeight.Bold,
+                            color = VibrantNavy,
+                            fontSize = 18.sp
+                        )
+                    }
+                },
+                text = {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        // Section A: Speedometer Custom Theme Selector
                         Column(
-                            modifier = Modifier.padding(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Text(
-                                text = "SPEEDOMETER THEME PREFERENCE",
-                                fontSize = 9.sp,
+                                text = "SPEEDOMETER THEME",
+                                fontSize = 11.sp,
                                 fontWeight = FontWeight.Black,
                                 color = VibrantNavy.copy(alpha = 0.6f),
                                 letterSpacing = 1.sp
                             )
-                            
                             Text(
-                                text = "Select your speedometer visual profile. Each profile changes the drawing canvas, colors, sweeps and needles.",
-                                fontSize = 11.sp,
+                                text = "Select visual profile for the gauge sweep, divisions, and needle.",
+                                fontSize = 10.sp,
                                 color = Color.Gray
                             )
 
-                            Spacer(modifier = Modifier.height(4.dp))
-
                             val themesList = listOf(
-                                Triple(0, "Analog Dial", "Classic dial arc with tick notch divisions and racing needle"),
-                                Triple(1, "Digital Glow", "Futuristic segment segmented arc bars with neon cyan digits"),
-                                Triple(2, "Retro 80s", "Warm orange-yellow synthwave neon step stacks with retro monospace feel"),
-                                Triple(3, "Minimalist", "Ultra tight single-line arc and tiny speed node trace"),
-                                Triple(4, "Sporty Redline", "Racy carbon gauge sweeping through orange speed warning zones")
-                             )
+                                Triple(0, "Analog Dial", "Classic dial arc with tick notches and racing needle"),
+                                Triple(1, "Digital Glow", "Futuristic segment bars with neon cyan digits"),
+                                Triple(2, "Retro 80s", "Warm orange-yellow neon stacks and retro gauge"),
+                                Triple(3, "Minimalist", "Ultra line arc and subtle speed node indicator"),
+                                Triple(4, "Sporty Redline", "Racing carbon gauge and orange warning threshold")
+                            )
 
                             themesList.forEach { (id, title, desc) ->
                                 val actsSelected = speedometerTheme == id
@@ -578,19 +646,19 @@ fun MileageTrackerScreen(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .clip(RoundedCornerShape(12.dp))
-                                        .background(if (actsSelected) VibrantBlue.copy(alpha = 0.15f) else Color.Transparent)
+                                        .background(if (actsSelected) VibrantBlue.copy(alpha = 0.1f) else Color.Transparent)
                                         .border(
-                                            width = if (actsSelected) 2.dp else 1.dp,
+                                            width = if (actsSelected) 1.5.dp else 1.dp,
                                             color = if (actsSelected) VibrantBlue else VibrantBorder.copy(alpha = 0.4f),
                                             shape = RoundedCornerShape(12.dp)
                                         )
                                         .clickable { viewModel.setSpeedometerTheme(id) }
-                                        .padding(12.dp)
+                                        .padding(8.dp)
                                         .testTag("speed_theme_option_$id")
                                 ) {
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
                                         RadioButton(
                                             selected = actsSelected,
@@ -600,7 +668,7 @@ fun MileageTrackerScreen(
                                         Column {
                                             Text(
                                                 text = title,
-                                                fontSize = 14.sp,
+                                                fontSize = 13.sp,
                                                 fontWeight = FontWeight.Bold,
                                                 color = if (actsSelected) VibrantBlue else VibrantTextDark
                                             )
@@ -614,21 +682,146 @@ fun MileageTrackerScreen(
                                 }
                             }
                         }
+
+                        Divider(color = VibrantBorder.copy(alpha = 0.3f))
+
+                        // Section B: General preferences toggles (boots, metric, auto calculation, dark theme icon)
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Text(
+                                text = "GENERAL PREFERENCES",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Black,
+                                color = VibrantNavy.copy(alpha = 0.6f),
+                                letterSpacing = 1.sp
+                            )
+
+                            // 1. Autostart preference toggle
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Allow Autostart inside boot", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = VibrantTextDark)
+                                    Text("Auto resume tracking on boot", fontSize = 10.sp, color = Color.Gray)
+                                }
+                                Switch(
+                                    checked = isAutostartEnabled,
+                                    onCheckedChange = { viewModel.toggleAutostart(it) },
+                                    colors = SwitchDefaults.colors(checkedThumbColor = VibrantBlue),
+                                    modifier = Modifier.testTag("autostart_switch")
+                                )
+                            }
+
+                            // 2. Auto Calculation preference toggle
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Auto-Calculate Trips", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = VibrantTextDark)
+                                    Text("Start when speed > 5 km/h", fontSize = 10.sp, color = Color.Gray)
+                                }
+                                Switch(
+                                    checked = isAutoCalculationEnabled,
+                                    onCheckedChange = { viewModel.toggleAutoCalculation(it) },
+                                    colors = SwitchDefaults.colors(checkedThumbColor = VibrantBlue),
+                                    modifier = Modifier.testTag("autocalc_switch")
+                                )
+                            }
+
+                            // 3. Unit preference selection
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Preferred Scale Unit", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = VibrantTextDark)
+                                    Text("Imperial (Miles) vs Metric (Km)", fontSize = 10.sp, color = Color.Gray)
+                                }
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Text(
+                                        "Km", 
+                                        fontSize = 12.sp, 
+                                        fontWeight = if (!useMiles) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (!useMiles) VibrantBlue else Color.Gray,
+                                        modifier = Modifier.clickable { viewModel.toggleUseMiles(false) }
+                                    )
+                                    Switch(
+                                        checked = useMiles,
+                                        onCheckedChange = { viewModel.toggleUseMiles(it) },
+                                        colors = SwitchDefaults.colors(checkedThumbColor = VibrantBlue),
+                                        modifier = Modifier.testTag("unit_switch")
+                                    )
+                                    Text(
+                                        "Mi", 
+                                        fontSize = 12.sp, 
+                                        fontWeight = if (useMiles) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (useMiles) VibrantBlue else Color.Gray,
+                                        modifier = Modifier.clickable { viewModel.toggleUseMiles(true) }
+                                    )
+                                }
+                            }
+
+                            // 4. Dark Theme selection and toggle
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("App Theme Mode", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = VibrantTextDark)
+                                    Text("Toggle Light, System or Dark visual styling", fontSize = 10.sp, color = Color.Gray)
+                                }
+                                Row(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(VibrantBorder.copy(alpha = 0.2f))
+                                        .padding(2.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                ) {
+                                    val themes = listOf("Sys", "Light", "Dark")
+                                    themes.forEachIndexed { index, name ->
+                                        val isSelected = themeMode == index
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(10.dp))
+                                                .background(if (isSelected) VibrantBlue else Color.Transparent)
+                                                .clickable { viewModel.setThemeMode(index) }
+                                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                                                .testTag("theme_button_$index"),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = name,
+                                                fontSize = 10.sp,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                color = if (isSelected) Color.White else VibrantTextDark.copy(alpha = 0.7f)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
-
-                    // 2. Preferences Settings Card (which incorporates boot start, metric, app dark theme toggle!)
-                    PreferencesCard(
-                        isAutostartEnabled = isAutostartEnabled,
-                        isAutoCalculationEnabled = isAutoCalculationEnabled,
-                        useMiles = useMiles,
-                        viewModel = viewModel
-                    )
-
-                    Spacer(modifier = Modifier.height(24.dp))
+                },
+                confirmButton = {
+                    Button(
+                        onClick = { showSettingsDialog = false },
+                        colors = ButtonDefaults.buttonColors(containerColor = VibrantBlue)
+                    ) {
+                        Text("Apply & Close")
+                    }
                 }
-            }
+            )
         }
-    }
 
     // Custom Odometer Entry Dialog
     if (showEditOdometerDialog) {
@@ -824,7 +1017,43 @@ fun OdometerCard(
 }
 
 @Composable
-fun GpsStatusRibbon(isGpsActive: Boolean) {
+fun GpsSignalBars(signalLevel: Int, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.Bottom
+    ) {
+        for (i in 1..4) {
+            val isActive = i <= signalLevel
+            val barHeight = (i * 3 + 2).dp
+            val barColor = if (isActive) {
+                when (signalLevel) {
+                    1 -> Color(0xFFEF5350) // Red
+                    2 -> Color(0xFFFFB74D) // Orange
+                    3 -> Color(0xFF81C784) // Green
+                    else -> Color(0xFF4FC3F7) // Cyan/Blue
+                }
+            } else {
+                Color.LightGray.copy(alpha = 0.4f)
+            }
+            Box(
+                modifier = Modifier
+                    .width(3.dp)
+                    .height(barHeight)
+                    .clip(RoundedCornerShape(1.dp))
+                    .background(barColor)
+            )
+        }
+    }
+}
+
+@Composable
+fun GpsStatusRibbon(
+    isGpsActive: Boolean,
+    satellites: Int,
+    signalLevel: Int,
+    onRefreshClick: () -> Unit
+) {
     val colors = LocalMileageTrackerColors.current
     val VibrantBg = colors.bg
     val VibrantTextDark = colors.textDark
@@ -885,26 +1114,44 @@ fun GpsStatusRibbon(isGpsActive: Boolean) {
             )
         }
 
-        // GPS Sat Info Tag
+        // GPS Sat Info & Refresh Action Tag
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            modifier = Modifier
-                .background(Color.White.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
-                .padding(horizontal = 8.dp, vertical = 4.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Icon(
-                imageVector = Icons.Default.LocationOn,
-                contentDescription = "GPS icon",
-                tint = VibrantTextDark,
-                modifier = Modifier.size(14.dp)
-            )
-            Text(
-                text = "100% SIGNAL",
-                fontSize = 9.sp,
-                fontWeight = FontWeight.Black,
-                color = VibrantTextDark
-            )
+            if (isGpsActive) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier
+                        .background(Color.White.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    GpsSignalBars(signalLevel = signalLevel)
+                    
+                    Text(
+                        text = "$satellites SATS",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = VibrantTextDark
+                    )
+                }
+            }
+
+            // Refresh Command trigger button
+            IconButton(
+                onClick = onRefreshClick,
+                modifier = Modifier
+                    .size(28.dp)
+                    .background(VibrantBlue.copy(alpha = 0.15f), CircleShape)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = "Refresh GPS connection",
+                    tint = VibrantBlue,
+                    modifier = Modifier.size(14.dp)
+                )
+            }
         }
     }
 }
@@ -918,6 +1165,7 @@ fun ActiveTripPanel(
     distanceUnit: String,
     useMiles: Boolean,
     speedometerTheme: Int,
+    modifier: Modifier = Modifier,
     onActionClick: () -> Unit
 ) {
     val colors = LocalMileageTrackerColors.current
@@ -931,9 +1179,8 @@ fun ActiveTripPanel(
     val VibrantBorder = colors.border
 
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .fillMaxHeight()
             .clip(RoundedCornerShape(32.dp))
             .background(colors.cardBg)
             .border(1.dp, VibrantBorder, RoundedCornerShape(32.dp))

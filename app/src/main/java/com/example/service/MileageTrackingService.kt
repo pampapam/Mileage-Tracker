@@ -9,6 +9,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.location.Location
+import android.location.GnssStatus
+import android.location.LocationManager
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
@@ -26,6 +28,12 @@ class MileageTrackingService : Service() {
     private lateinit var repository: TripRepository
     private lateinit var fusedLocationClient: FusedLocationProviderClient
     private var locationCallback: LocationCallback? = null
+
+    // Satellite and Signal Strength properties
+    private var locationManager: LocationManager? = null
+    private var gnssStatusCallback: GnssStatus.Callback? = null
+    private var currentSatellitesConnected: Int = 0
+    private var currentGpsSignalLevel: Int = 0 // 0 to 4 bars
 
     // Tracking State
     private var activeTripId: Int? = null
@@ -47,6 +55,7 @@ class MileageTrackingService : Service() {
         const val ACTION_START_TRACKING = "com.example.service.START_TRACKING"
         const val ACTION_STOP_TRACKING = "com.example.service.STOP_TRACKING"
         const val ACTION_REFRESH_STATE = "com.example.service.REFRESH_STATE"
+        const val ACTION_REFRESH_GPS_CONNECTION = "com.example.service.REFRESH_GPS_CONNECTION"
 
         // Status broadcast for visual UI syncing if needed
         const val BROADCAST_ACTION_STATUS = "com.example.service.STATUS_UPDATE"
@@ -54,6 +63,8 @@ class MileageTrackingService : Service() {
         const val EXTRA_DISTANCE = "extra_distance"
         const val EXTRA_IS_MONITORING = "extra_is_monitoring"
         const val EXTRA_SPEED = "extra_speed"
+        const val EXTRA_SATELLITES = "extra_satellites"
+        const val EXTRA_SIGNAL_LEVEL = "extra_signal_level"
     }
 
     override fun onCreate() {
@@ -110,6 +121,10 @@ class MileageTrackingService : Service() {
                     stopForeground(true)
                 }
                 stopSelf()
+            }
+            ACTION_REFRESH_GPS_CONNECTION -> {
+                startForegroundServiceCompat()
+                reconnectGps()
             }
             ACTION_REFRESH_STATE -> {
                 broadcastStatus()
@@ -280,21 +295,89 @@ class MileageTrackingService : Service() {
                 locationCallback!!,
                 mainLooper
             )
-            updateNotification("GPS active. Monitoring coordinates...")
+            registerGnssStatus()
+            updateNotification()
         } catch (unlikely: SecurityException) {
             updateNotification("Location permissions missing!")
         }
     }
 
-    private fun stopGpsTracking() {
+    private fun registerGnssStatus() {
+        if (locationManager == null) {
+            locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        }
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && gnssStatusCallback == null) {
+            gnssStatusCallback = object : GnssStatus.Callback() {
+                override fun onSatelliteStatusChanged(status: GnssStatus) {
+                    val totalSats = status.satelliteCount
+                    var inFixCount = 0
+                    var totalSnr = 0.0
+                    
+                    for (i in 0 until totalSats) {
+                        if (status.usedInFix(i)) {
+                            inFixCount++
+                            totalSnr += status.getCn0DbHz(i)
+                        }
+                    }
+                    
+                    currentSatellitesConnected = inFixCount
+                    val averageCn0 = if (inFixCount > 0) totalSnr / inFixCount else 0.0
+                    
+                    // Wifi-like signal strength (0 to 4 bars)
+                    currentGpsSignalLevel = when {
+                        inFixCount == 0 -> 0
+                        averageCn0 >= 32.0 -> 4
+                        averageCn0 >= 26.0 -> 3
+                        averageCn0 >= 18.0 -> 2
+                        else -> 1
+                    }
+                    
+                    broadcastStatus()
+                    updateNotification()
+                }
+            }
+            
+            try {
+                locationManager?.registerGnssStatusCallback(gnssStatusCallback!!, null)
+            } catch (e: SecurityException) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    private fun unregisterGnssStatus() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && gnssStatusCallback != null) {
+            try {
+                locationManager?.unregisterGnssStatusCallback(gnssStatusCallback!!)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            gnssStatusCallback = null
+        }
+        currentSatellitesConnected = 0
+        currentGpsSignalLevel = 0
+    }
+
+    private fun reconnectGps() {
+        stopGpsTrackingOnly()
+        startGpsTracking()
+    }
+
+    private fun stopGpsTrackingOnly() {
         locationCallback?.let {
             fusedLocationClient.removeLocationUpdates(it)
         }
         locationCallback = null
         lastLocation = null
+        currentSpeedMs = 0.0
+        unregisterGnssStatus()
+    }
+
+    private fun stopGpsTracking() {
+        stopGpsTrackingOnly()
         activeTripId = null
         accumulatedDistanceMeters = 0.0
-        currentSpeedMs = 0.0
     }
 
     private fun handleNewLocation(location: Location) {
@@ -376,6 +459,8 @@ class MileageTrackingService : Service() {
             putExtra(EXTRA_DISTANCE, accumulatedDistanceMeters)
             putExtra(EXTRA_IS_MONITORING, locationCallback != null)
             putExtra(EXTRA_SPEED, currentSpeedMs)
+            putExtra(EXTRA_SATELLITES, currentSatellitesConnected)
+            putExtra(EXTRA_SIGNAL_LEVEL, currentGpsSignalLevel)
         }
         sendBroadcast(intent)
     }

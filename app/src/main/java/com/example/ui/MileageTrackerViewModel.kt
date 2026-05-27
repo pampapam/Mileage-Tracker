@@ -41,6 +41,12 @@ class MileageTrackerViewModel(
     private val _isGpsActive = MutableStateFlow(false)
     val isGpsActive: StateFlow<Boolean> = _isGpsActive.asStateFlow()
 
+    private val _satellitesConnected = MutableStateFlow(0)
+    val satellitesConnected: StateFlow<Int> = _satellitesConnected.asStateFlow()
+
+    private val _gpsSignalLevel = MutableStateFlow(0) // 0 to 4 bars
+    val gpsSignalLevel: StateFlow<Int> = _gpsSignalLevel.asStateFlow()
+
     private val _liveActiveDistance = MutableStateFlow(0.0) // in meters
     val liveActiveDistance: StateFlow<Double> = _liveActiveDistance.asStateFlow()
 
@@ -60,13 +66,34 @@ class MileageTrackerViewModel(
         customOffset + (totalMeters * factor)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
 
-    fun updateLiveStatus(speedMs: Double, distanceMeters: Double, isGpsActive: Boolean) {
+    fun updateLiveStatus(speedMs: Double, distanceMeters: Double, isGpsActive: Boolean, satellites: Int = 0, signalLevel: Int = 0) {
         _currentSpeed.value = speedMs
         _liveActiveDistance.value = distanceMeters
         _isGpsActive.value = isGpsActive
+        _satellitesConnected.value = satellites
+        _gpsSignalLevel.value = signalLevel
     }
 
     // User actions
+    fun startGpsMonitoringIfNotRunning(context: Context) {
+        val hasFine = ContextCompat.checkSelfPermission(context, android.Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (hasFine && !_isGpsActive.value) {
+            val intent = Intent(context, MileageTrackingService::class.java).apply {
+                action = MileageTrackingService.ACTION_START_TRACKING
+            }
+            ContextCompat.startForegroundService(context, intent)
+        }
+    }
+
+    fun refreshGps(context: Context) {
+        viewModelScope.launch {
+            val intent = Intent(context, MileageTrackingService::class.java).apply {
+                action = MileageTrackingService.ACTION_REFRESH_GPS_CONNECTION
+            }
+            ContextCompat.startForegroundService(context, intent)
+        }
+    }
+
     fun startTracking(context: Context) {
         viewModelScope.launch {
             // Write database starting record

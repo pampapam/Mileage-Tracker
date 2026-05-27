@@ -30,7 +30,9 @@ class MainActivity : ComponentActivity() {
                 val speed = intent.getDoubleExtra(MileageTrackingService.EXTRA_SPEED, 0.0)
                 val distance = intent.getDoubleExtra(MileageTrackingService.EXTRA_DISTANCE, 0.0)
                 val isMonitoring = intent.getBooleanExtra(MileageTrackingService.EXTRA_IS_MONITORING, false)
-                viewModel.updateLiveStatus(speed, distance, isMonitoring)
+                val satellites = intent.getIntExtra(MileageTrackingService.EXTRA_SATELLITES, 0)
+                val signalLevel = intent.getIntExtra(MileageTrackingService.EXTRA_SIGNAL_LEVEL, 0)
+                viewModel.updateLiveStatus(speed, distance, isMonitoring, satellites, signalLevel)
             }
         }
     }
@@ -67,14 +69,29 @@ class MainActivity : ComponentActivity() {
             registerReceiver(serviceReceiver, filter)
         }
 
-        // Poll current service state if active to sync client view model immediately
-        val intent = Intent(this, MileageTrackingService::class.java).apply {
-            action = MileageTrackingService.ACTION_REFRESH_STATE
-        }
-        try {
-            startService(intent)
-        } catch (e: Exception) {
-            // Service not running yet, that's fine
+        // Autoconnect to GPS if location services is allowed (permissions granted)
+        val hasFine = androidx.core.content.ContextCompat.checkSelfPermission(
+            this, android.Manifest.permission.ACCESS_FINE_LOCATION
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (hasFine) {
+            val autoConnectIntent = Intent(this, MileageTrackingService::class.java).apply {
+                action = MileageTrackingService.ACTION_START_TRACKING
+            }
+            try {
+                androidx.core.content.ContextCompat.startForegroundService(this, autoConnectIntent)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        } else {
+            // Poll current service state if active to sync client view model immediately
+            val intent = Intent(this, MileageTrackingService::class.java).apply {
+                action = MileageTrackingService.ACTION_REFRESH_STATE
+            }
+            try {
+                startService(intent)
+            } catch (e: Exception) {
+                // Service not running yet, that's fine
+            }
         }
     }
 
