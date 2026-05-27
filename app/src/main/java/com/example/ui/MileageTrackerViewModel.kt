@@ -8,6 +8,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.entity.Trip
 import com.example.data.repository.TripRepository
+import com.example.data.repository.ServiceItem
 import com.example.service.MileageTrackingService
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -36,6 +37,8 @@ class MileageTrackerViewModel(
     val cardOrder: StateFlow<List<String>> = repository.cardOrder
     val landscapeFeaturedSide: StateFlow<String> = repository.landscapeFeaturedSide
     val landscapeFeaturedCard: StateFlow<String> = repository.landscapeFeaturedCard
+    val serviceGlowEnabled: StateFlow<Boolean> = repository.serviceGlowEnabled
+    val serviceItems: StateFlow<List<ServiceItem>> = repository.serviceItems
 
     fun setCardOrder(order: List<String>) {
         viewModelScope.launch {
@@ -52,6 +55,18 @@ class MileageTrackerViewModel(
     fun setLandscapeFeaturedCard(cardId: String) {
         viewModelScope.launch {
             repository.setLandscapeFeaturedCard(cardId)
+        }
+    }
+
+    fun setServiceGlowEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            repository.setServiceGlowEnabled(enabled)
+        }
+    }
+
+    fun updateServiceItems(items: List<ServiceItem>) {
+        viewModelScope.launch {
+            repository.updateServiceItems(items)
         }
     }
 

@@ -47,7 +47,7 @@ class TripRepository(
     private val _speedometerTheme = MutableStateFlow(getSpeedometerThemePref())
     val speedometerTheme: StateFlow<Int> = _speedometerTheme.asStateFlow()
 
-    // Preferences: Dashboard Card Order (comma-separated lists of: "odometer", "gps", "speedometer")
+    // Preferences: Dashboard Card Order (comma-separated lists of: "odometer", "gps", "speedometer", "services")
     private val _cardOrder = MutableStateFlow(getCardOrderPref())
     val cardOrder: StateFlow<List<String>> = _cardOrder.asStateFlow()
 
@@ -55,9 +55,17 @@ class TripRepository(
     private val _landscapeFeaturedSide = MutableStateFlow(getLandscapeFeaturedSidePref())
     val landscapeFeaturedSide: StateFlow<String> = _landscapeFeaturedSide.asStateFlow()
 
-    // Preferences: Landscape featured card ID ("speedometer", "odometer", "gps")
+    // Preferences: Landscape featured card ID ("speedometer", "odometer", "gps", "services")
     private val _landscapeFeaturedCard = MutableStateFlow(getLandscapeFeaturedCardPref())
     val landscapeFeaturedCard: StateFlow<String> = _landscapeFeaturedCard.asStateFlow()
+
+    // Preferences: Service Glow Enabled
+    private val _serviceGlowEnabled = MutableStateFlow(getServiceGlowEnabledPref())
+    val serviceGlowEnabled: StateFlow<Boolean> = _serviceGlowEnabled.asStateFlow()
+
+    // Preferences: List of Service Items
+    private val _serviceItems = MutableStateFlow(getServiceItemsPref())
+    val serviceItems: StateFlow<List<ServiceItem>> = _serviceItems.asStateFlow()
 
     // Helper functions for prefs
     private fun getLandscapeFeaturedSidePref(): String {
@@ -78,11 +86,75 @@ class TripRepository(
         _landscapeFeaturedCard.value = cardId
     }
 
+    fun setServiceGlowEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("service_glow_enabled", enabled).apply()
+        _serviceGlowEnabled.value = enabled
+    }
+
+    private fun getServiceGlowEnabledPref(): Boolean {
+        return prefs.getBoolean("service_glow_enabled", true)
+    }
+
+    private fun getServiceItemsPref(): List<ServiceItem> {
+        val jsonStr = prefs.getString("service_items", null)
+        if (jsonStr.isNullOrEmpty()) {
+            val defaultServices = listOf(
+                ServiceItem("oil_change", "Oil Change", 5000.0, 0.0),
+                ServiceItem("transmission_change", "Transmission Oil Change", 30000.0, 0.0),
+                ServiceItem("timing_belt", "Timing Belt Change", 60000.0, 0.0)
+            )
+            saveServiceItemsPref(defaultServices)
+            return defaultServices
+        }
+        return try {
+            val list = mutableListOf<ServiceItem>()
+            val array = org.json.JSONArray(jsonStr)
+            for (i in 0 until array.length()) {
+                val obj = array.getJSONObject(i)
+                list.add(
+                    ServiceItem(
+                        id = obj.getString("id"),
+                        name = obj.getString("name"),
+                        interval = obj.getDouble("interval"),
+                        lastServiceMileage = obj.optDouble("lastServiceMileage", 0.0)
+                    )
+                )
+            }
+            list
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun saveServiceItemsPref(items: List<ServiceItem>) {
+        val array = org.json.JSONArray()
+        for (item in items) {
+            val obj = org.json.JSONObject()
+            obj.put("id", item.id)
+            obj.put("name", item.name)
+            obj.put("interval", item.interval)
+            obj.put("lastServiceMileage", item.lastServiceMileage)
+            array.put(obj)
+        }
+        prefs.edit().putString("service_items", array.toString()).apply()
+    }
+
+    fun updateServiceItems(items: List<ServiceItem>) {
+        saveServiceItemsPref(items)
+        _serviceItems.value = items
+    }
+
     private fun getCardOrderPref(): List<String> {
         val saved = prefs.getString("dashboard_card_order", null)
-        val defaultCards = listOf("odometer", "gps", "speedometer")
+        val defaultCards = listOf("odometer", "gps", "speedometer", "services")
         return if (!saved.isNullOrEmpty()) {
-            saved.split(",").filter { it in defaultCards }
+            val savedList = saved.split(",").filter { it in defaultCards }.toMutableList()
+            defaultCards.forEach { card ->
+                if (card !in savedList) {
+                    savedList.add(card)
+                }
+            }
+            savedList
         } else {
             defaultCards
         }
@@ -192,3 +264,10 @@ class TripRepository(
         setCustomTotalMileage(0.0)
     }
 }
+
+data class ServiceItem(
+    val id: String,
+    val name: String,
+    val interval: Double,
+    val lastServiceMileage: Double
+)

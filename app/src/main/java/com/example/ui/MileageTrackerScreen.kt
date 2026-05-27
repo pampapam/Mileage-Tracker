@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.example.data.entity.Trip
+import com.example.data.repository.ServiceItem
 import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.math.cos
@@ -401,6 +402,16 @@ fun MileageTrackerScreen(
                                         viewModel.startTracking(context)
                                     }
                                 },
+                                index = index,
+                                isEditingLayout = isEditingLayout,
+                                cardOrder = cardOrder,
+                                viewModel = viewModel
+                            )
+                        }
+                        "services" -> {
+                            ServicesCard(
+                                totalMileage = totalMileage,
+                                distanceUnit = distanceUnit,
                                 index = index,
                                 isEditingLayout = isEditingLayout,
                                 cardOrder = cardOrder,
@@ -1037,6 +1048,7 @@ fun DashboardCard(
     cardOrder: List<String>,
     viewModel: MileageTrackerViewModel,
     modifier: Modifier = Modifier,
+    isGlowing: Boolean = false,
     content: @Composable ColumnScope.() -> Unit
 ) {
     val colors = LocalMileageTrackerColors.current
@@ -1051,14 +1063,41 @@ fun DashboardCard(
     val featuredCardVal by viewModel.landscapeFeaturedCard.collectAsState()
     val isFeaturedInLandscape = isLandscape && cardOrder.getOrNull(index) == featuredCardVal
 
+    val infiniteTransition = rememberInfiniteTransition(label = "neon_glow")
+    val glowAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.4f,
+        targetValue = 0.95f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            animation = androidx.compose.animation.core.tween(1200, easing = androidx.compose.animation.core.LinearEasing),
+            repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
+        ),
+        label = "glow_alpha"
+    )
+
+    val glowColor = Color(0xFFFF3B30) // Vibrant premium neon red
+    val animatedBorderModifier = if (isGlowing) {
+        Modifier
+            .shadow(
+                elevation = (6 + (glowAlpha * 6)).dp,
+                shape = RoundedCornerShape(24.dp),
+                ambientColor = glowColor,
+                spotColor = glowColor
+            )
+            .border(3.2.dp, glowColor.copy(alpha = glowAlpha * 0.4f), RoundedCornerShape(24.dp))
+            .border(1.6.dp, glowColor.copy(alpha = glowAlpha), RoundedCornerShape(24.dp))
+    } else {
+        Modifier
+            .shadow(elevation = if (dragOffsetY != 0f) 8.dp else 2.dp, shape = RoundedCornerShape(24.dp))
+            .border(1.dp, colors.border.copy(alpha = 0.5f), RoundedCornerShape(24.dp))
+    }
+
     Card(
         colors = CardDefaults.cardColors(containerColor = colors.cardBg),
         shape = RoundedCornerShape(24.dp),
         modifier = modifier
             .fillMaxWidth()
             .offset { IntOffset(0, animatedDragOffset.roundToInt()) }
-            .border(1.dp, colors.border.copy(alpha = 0.5f), RoundedCornerShape(24.dp))
-            .shadow(elevation = if (dragOffsetY != 0f) 8.dp else 2.dp, shape = RoundedCornerShape(24.dp))
+            .then(animatedBorderModifier)
     ) {
         Column(
             modifier = Modifier.padding(18.dp)
@@ -1980,6 +2019,468 @@ fun TripLogItem(trip: Trip, deleteTrip: () -> Unit, useMiles: Boolean) {
                     contentDescription = "Delete Trip Log",
                     tint = Color(0xFFBA1A1A)
                 )
+            }
+        }
+    }
+}
+
+@Composable
+fun ServicesCard(
+    totalMileage: Double,
+    distanceUnit: String,
+    index: Int,
+    isEditingLayout: Boolean,
+    cardOrder: List<String>,
+    viewModel: MileageTrackerViewModel
+) {
+    val colors = LocalMileageTrackerColors.current
+    val serviceItems by viewModel.serviceItems.collectAsState()
+    val serviceGlowEnabled by viewModel.serviceGlowEnabled.collectAsState()
+
+    // Estimate if any service is near (remaining is <= 500 units, or <= 10% of interval, or overdue)
+    val isAnyServiceNear = serviceItems.any { item ->
+        val dueOdo = item.lastServiceMileage + item.interval
+        val remaining = dueOdo - totalMileage
+        remaining <= 500.0 || remaining <= 0.0 || remaining <= (0.1 * item.interval)
+    }
+
+    val isGlowing = serviceGlowEnabled && isAnyServiceNear
+
+    var showAddDialog by remember { mutableStateOf(false) }
+    var showEditDialog by remember { mutableStateOf(false) }
+    val selectedItemToEditState = remember { mutableStateOf<ServiceItem?>(null) }
+
+    DashboardCard(
+        title = "Services",
+        icon = Icons.Default.Settings,
+        index = index,
+        isEditingLayout = isEditingLayout,
+        cardOrder = cardOrder,
+        viewModel = viewModel,
+        isGlowing = isGlowing
+    ) {
+        // Switch for Enabling/Disabling Glowing Red Alarm Border
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(colors.border.copy(alpha = 0.1f))
+                .clickable { viewModel.setServiceGlowEnabled(!serviceGlowEnabled) }
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Neon Alert Glow",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = colors.navy
+                )
+                Text(
+                    text = "Glow border neon red when service is near/overdue",
+                    fontSize = 10.sp,
+                    color = Color.Gray
+                )
+            }
+            Switch(
+                checked = serviceGlowEnabled,
+                onCheckedChange = { viewModel.setServiceGlowEnabled(it) },
+                modifier = Modifier.testTag("service_glow_switch")
+            )
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        if (serviceItems.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "No service checkups configured.",
+                    color = Color.Gray,
+                    fontSize = 12.sp,
+                    textAlign = TextAlign.Center
+                )
+            }
+        } else {
+            serviceItems.forEach { item ->
+                val dueOdo = item.lastServiceMileage + item.interval
+                val remaining = dueOdo - totalMileage
+                val currentUsage = totalMileage - item.lastServiceMileage
+                val percent = if (item.interval > 0) {
+                    (currentUsage / item.interval).coerceIn(0.0, 1.0)
+                } else {
+                    0.0
+                }
+                val isOverdue = remaining <= 0.0
+                val isNear = remaining <= 500.0 || remaining <= (0.1 * item.interval)
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    text = item.name,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = colors.navy
+                                )
+                                if (isOverdue) {
+                                    Icon(
+                                        imageVector = Icons.Default.Warning,
+                                        contentDescription = "Overdue",
+                                        tint = Color(0xFFFF3B30),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                } else if (isNear) {
+                                    Icon(
+                                        imageVector = Icons.Default.Info,
+                                        contentDescription = "Near Checkup",
+                                        tint = Color(0xFFFF9F0A),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+
+                            val remainingStr = if (isOverdue) {
+                                "Overdue by ${String.format(Locale.US, "%.1f", -remaining)} $distanceUnit"
+                            } else {
+                                "${String.format(Locale.US, "%.1f", remaining)} $distanceUnit remaining"
+                            }
+                            Text(
+                                text = "Every ${String.format(Locale.US, "%.0f", item.interval)} $distanceUnit • $remainingStr",
+                                fontSize = 11.sp,
+                                color = if (isOverdue) Color(0xFFFF3B30) else if (isNear) Color(0xFFFF9F0A) else Color.Gray
+                            )
+                        }
+
+                        // Actions
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // Reset/Mark Service done
+                            IconButton(
+                                onClick = {
+                                    val updated = serviceItems.map {
+                                        if (it.id == item.id) it.copy(lastServiceMileage = totalMileage) else it
+                                    }
+                                    viewModel.updateServiceItems(updated)
+                                },
+                                modifier = Modifier.size(32.dp).testTag("perform_service_btn_${item.id}")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = "Mark service performed",
+                                    tint = colors.blue,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+
+                            // Edit service
+                            IconButton(
+                                onClick = {
+                                    selectedItemToEditState.value = item
+                                    showEditDialog = true
+                                },
+                                modifier = Modifier.size(32.dp).testTag("edit_service_btn_${item.id}")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = "Edit Service",
+                                    tint = colors.navy.copy(alpha = 0.5f),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    val progressBarColor = if (isOverdue) {
+                        Color(0xFFFF3B30)
+                    } else if (isNear) {
+                        Color(0xFFFF9F0A)
+                    } else {
+                        colors.blue
+                    }
+
+                    LinearProgressIndicator(
+                        progress = percent.toFloat(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(8.dp)
+                            .clip(RoundedCornerShape(4.dp)),
+                        color = progressBarColor,
+                        trackColor = colors.border.copy(alpha = 0.15f)
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Button(
+            onClick = { showAddDialog = true },
+            colors = ButtonDefaults.buttonColors(containerColor = colors.blue),
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("add_custom_service_btn")
+        ) {
+            Icon(
+                imageVector = Icons.Default.Add,
+                contentDescription = "Add Custom Service",
+                tint = Color.White,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text("Add Custom Service", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Color.White)
+        }
+    }
+
+    // dialogs
+    if (showAddDialog) {
+        var serviceName by remember { mutableStateOf("") }
+        var serviceIntervalStr by remember { mutableStateOf("") }
+        var startFromCurrentOdometer by remember { mutableStateOf(true) }
+
+        androidx.compose.ui.window.Dialog(onDismissRequest = { showAddDialog = false }) {
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = colors.cardBg,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+                    .border(1.dp, colors.border.copy(alpha = 0.3f), RoundedCornerShape(24.dp))
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Text(
+                        text = "ADD SERVICE TYPE",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Black,
+                        color = colors.navy,
+                        letterSpacing = 1.sp
+                    )
+
+                    OutlinedTextField(
+                        value = serviceName,
+                        onValueChange = { serviceName = it },
+                        label = { Text("Service Name (e.g., Spark Plugs)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("add_service_name_input"),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = colors.blue,
+                            unfocusedBorderColor = colors.border
+                        )
+                    )
+
+                    OutlinedTextField(
+                        value = serviceIntervalStr,
+                        onValueChange = { serviceIntervalStr = it.filter { char -> char.isDigit() } },
+                        label = { Text("Service Interval ($distanceUnit)") },
+                        singleLine = true,
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            keyboardType = KeyboardType.Number
+                        ),
+                        modifier = Modifier.fillMaxWidth().testTag("add_service_interval_input"),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = colors.blue,
+                            unfocusedBorderColor = colors.border
+                        )
+                    )
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { startFromCurrentOdometer = !startFromCurrentOdometer }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = startFromCurrentOdometer,
+                            onCheckedChange = { startFromCurrentOdometer = it },
+                            modifier = Modifier.testTag("add_service_offset_checkbox")
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Text("Mark as recently performed", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = colors.navy)
+                            Text("Count service mileage starting from current odometer (${String.format(Locale.US, "%.1f", totalMileage)} $distanceUnit)", fontSize = 10.sp, color = Color.Gray)
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(onClick = { showAddDialog = false }) {
+                            Text("CANCEL", color = Color.Gray, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                val intervalValue = serviceIntervalStr.toDoubleOrNull() ?: 0.0
+                                if (serviceName.isNotBlank() && intervalValue > 0.0) {
+                                    val lastOdo = if (startFromCurrentOdometer) totalMileage else 0.0
+                                    val newService = ServiceItem(
+                                        id = "custom_" + System.currentTimeMillis().toString(),
+                                        name = serviceName,
+                                        interval = intervalValue,
+                                        lastServiceMileage = lastOdo
+                                    )
+                                    viewModel.updateServiceItems(serviceItems + newService)
+                                    showAddDialog = false
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = colors.blue),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text("SAVE", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color.White)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    val editingItem = selectedItemToEditState.value
+    if (showEditDialog && editingItem != null) {
+        var serviceName by remember(editingItem) { mutableStateOf(editingItem.name) }
+        var serviceIntervalStr by remember(editingItem) { mutableStateOf(editingItem.interval.toInt().toString()) }
+        var lastServiceStr by remember(editingItem) { mutableStateOf(editingItem.lastServiceMileage.toInt().toString()) }
+
+        androidx.compose.ui.window.Dialog(onDismissRequest = { showEditDialog = false }) {
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = colors.cardBg,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+                    .border(1.dp, colors.border.copy(alpha = 0.3f), RoundedCornerShape(24.dp))
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Text(
+                        text = "EDIT SERVICE TYPE",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Black,
+                        color = colors.navy,
+                        letterSpacing = 1.sp
+                    )
+
+                    OutlinedTextField(
+                        value = serviceName,
+                        onValueChange = { serviceName = it },
+                        label = { Text("Service Name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("edit_service_name_input"),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = colors.blue,
+                            unfocusedBorderColor = colors.border
+                        )
+                    )
+
+                    OutlinedTextField(
+                        value = serviceIntervalStr,
+                        onValueChange = { serviceIntervalStr = it.filter { char -> char.isDigit() } },
+                        label = { Text("Service Interval ($distanceUnit)") },
+                        singleLine = true,
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            keyboardType = KeyboardType.Number
+                        ),
+                        modifier = Modifier.fillMaxWidth().testTag("edit_service_interval_input"),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = colors.blue,
+                            unfocusedBorderColor = colors.border
+                        )
+                    )
+
+                    OutlinedTextField(
+                        value = lastServiceStr,
+                        onValueChange = { lastServiceStr = it.filter { char -> char.isDigit() || char == '.' } },
+                        label = { Text("Last Serviced Mileage ($distanceUnit)") },
+                        singleLine = true,
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            keyboardType = KeyboardType.Decimal
+                        ),
+                        modifier = Modifier.fillMaxWidth().testTag("edit_service_last_odo_input"),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = colors.blue,
+                            unfocusedBorderColor = colors.border
+                        )
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(
+                            onClick = {
+                                viewModel.updateServiceItems(serviceItems.filter { it.id != editingItem.id })
+                                showEditDialog = false
+                            },
+                            contentPadding = PaddingValues(0.dp)
+                        ) {
+                            Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete", tint = Color(0xFFFF3B30))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("DELETE", color = Color(0xFFFF3B30), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
+
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            TextButton(onClick = { showEditDialog = false }) {
+                                Text("CANCEL", color = Color.Gray, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Button(
+                                onClick = {
+                                    val intervalValue = serviceIntervalStr.toDoubleOrNull() ?: 0.0
+                                    val lastServiceValue = lastServiceStr.toDoubleOrNull() ?: 0.0
+                                    if (serviceName.isNotBlank() && intervalValue > 0.0) {
+                                        val updated = serviceItems.map {
+                                            if (it.id == editingItem.id) {
+                                                it.copy(
+                                                    name = serviceName,
+                                                    interval = intervalValue,
+                                                    lastServiceMileage = lastServiceValue
+                                                )
+                                            } else {
+                                                it
+                                            }
+                                        }
+                                        viewModel.updateServiceItems(updated)
+                                        showEditDialog = false
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = colors.blue),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text("SAVE", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color.White)
+                            }
+                        }
+                    }
+                }
             }
         }
     }
