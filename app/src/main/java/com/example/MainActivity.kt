@@ -82,16 +82,6 @@ class MainActivity : ComponentActivity() {
             } catch (e: Exception) {
                 e.printStackTrace()
             }
-        } else {
-            // Poll current service state if active to sync client view model immediately
-            val intent = Intent(this, MileageTrackingService::class.java).apply {
-                action = MileageTrackingService.ACTION_REFRESH_STATE
-            }
-            try {
-                startService(intent)
-            } catch (e: Exception) {
-                // Service not running yet, that's fine
-            }
         }
     }
 

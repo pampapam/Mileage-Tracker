@@ -339,7 +339,8 @@ class MileageTrackingService : Service() {
             }
             
             try {
-                locationManager?.registerGnssStatusCallback(gnssStatusCallback!!, null)
+                val handler = android.os.Handler(android.os.Looper.getMainLooper())
+                locationManager?.registerGnssStatusCallback(gnssStatusCallback!!, handler)
             } catch (e: SecurityException) {
                 e.printStackTrace()
             }
