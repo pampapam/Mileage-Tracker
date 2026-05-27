@@ -31,6 +31,8 @@ class MileageTrackerViewModel(
     val useMiles: StateFlow<Boolean> = repository.useMiles
     val isAutostartEnabled: StateFlow<Boolean> = repository.isAutostartEnabled
     val isAutoCalculationEnabled: StateFlow<Boolean> = repository.isAutoCalculationEnabled
+    val themeMode: StateFlow<Int> = repository.themeMode
+    val speedometerTheme: StateFlow<Int> = repository.speedometerTheme
 
     // Live update fields (received via service broadcasts)
     private val _currentSpeed = MutableStateFlow(0.0) // in m/s
@@ -115,6 +117,18 @@ class MileageTrackerViewModel(
     fun toggleAutoCalculation(enabled: Boolean) {
         viewModelScope.launch {
             repository.setIsAutoCalculationEnabled(enabled)
+        }
+    }
+
+    fun setThemeMode(mode: Int) {
+        viewModelScope.launch {
+            repository.setThemeMode(mode)
+        }
+    }
+
+    fun setSpeedometerTheme(theme: Int) {
+        viewModelScope.launch {
+            repository.setSpeedometerTheme(theme)
         }
     }
 

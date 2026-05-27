@@ -39,6 +39,14 @@ class TripRepository(
     private val _isAutoCalculationEnabled = MutableStateFlow(getIsAutoCalculationEnabledPref())
     val isAutoCalculationEnabled: StateFlow<Boolean> = _isAutoCalculationEnabled.asStateFlow()
 
+    // Preferences: Theme Mode (0 = System, 1 = Light, 2 = Dark)
+    private val _themeMode = MutableStateFlow(getThemeModePref())
+    val themeMode: StateFlow<Int> = _themeMode.asStateFlow()
+
+    // Preferences: Speedometer Theme (0 = Analog, 1 = Digital, 2 = Retro, 3 = Minimalist, 4 = Sporty)
+    private val _speedometerTheme = MutableStateFlow(getSpeedometerThemePref())
+    val speedometerTheme: StateFlow<Int> = _speedometerTheme.asStateFlow()
+
     // Helper functions for prefs
     private fun getCustomTotalMileagePref(): Double {
         return prefs.getFloat("custom_total_mileage", 0f).toDouble()
@@ -54,6 +62,24 @@ class TripRepository(
 
     private fun getIsAutoCalculationEnabledPref(): Boolean {
         return prefs.getBoolean("is_auto_calculation_enabled", true) // Default to true
+    }
+
+    private fun getThemeModePref(): Int {
+        return prefs.getInt("theme_mode", 0) // Default to 0 (System)
+    }
+
+    private fun getSpeedometerThemePref(): Int {
+        return prefs.getInt("speedometer_theme", 0) // Default to 0 (Analog)
+    }
+
+    fun setThemeMode(mode: Int) {
+        prefs.edit().putInt("theme_mode", mode).apply()
+        _themeMode.value = mode
+    }
+
+    fun setSpeedometerTheme(theme: Int) {
+        prefs.edit().putInt("speedometer_theme", theme).apply()
+        _speedometerTheme.value = theme
     }
 
     fun setCustomTotalMileage(mileage: Double) {
